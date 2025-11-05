@@ -17,8 +17,12 @@ class Settings(BaseSettings):
         default=0.1, ge=0.0, le=2.0, description="LLM temperature for consistency"
     )
 
-    # Database
-    database_path: str = Field(default="data/app.db", description="SQLite database path")
+    # Database - MySQL
+    db_host: str = Field(default="localhost", description="MySQL host")
+    db_port: int = Field(default=3306, ge=1, le=65535, description="MySQL port")
+    db_user: str = Field(default="apiuser", description="MySQL username")
+    db_password: str = Field(default="apipassword", description="MySQL password")
+    db_name: str = Field(default="segmentation", description="MySQL database name")
 
     # Cache settings
     cache_ttl_seconds: int = Field(
