@@ -1,11 +1,11 @@
 """Health check and statistics endpoints."""
 
-import aiosqlite
 from fastapi import APIRouter
 from app.models.schemas import HealthResponse
 from app.core.config import settings
 from app.services.cache import cache_service
 from app.db.manager import dictionary_manager
+from app.db.database import get_pool
 
 router = APIRouter(prefix="/api/v1", tags=["health"])
 
@@ -27,11 +27,13 @@ async def health_check() -> HealthResponse:
 
     # Check database
     try:
-        async with aiosqlite.connect(settings.database_path) as db:
-            async with db.execute("SELECT 1") as cursor:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT 1")
                 await cursor.fetchone()
         db_healthy = True
-        details["database"] = "Connected"
+        details["database"] = f"Connected to MySQL at {settings.db_host}:{settings.db_port}"
     except Exception as e:
         details["database"] = f"Error: {str(e)}"
 
