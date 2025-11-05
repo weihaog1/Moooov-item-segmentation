@@ -1,7 +1,8 @@
 """LLM-based tokenization and tagging using Google Gemini."""
 
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from typing import Optional
 from app.core.config import settings
 from app.models.schemas import TokenTag
@@ -11,14 +12,9 @@ class LLMProcessor:
     """Processes keywords using Google Gemini for tokenization and tagging."""
 
     def __init__(self):
-        genai.configure(api_key=settings.gemini_api_key)
-        self.model = genai.GenerativeModel(
-            settings.gemini_model,
-            generation_config={
-                "temperature": settings.gemini_temperature,
-                "response_mime_type": "application/json",
-            },
-        )
+        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.model_name = settings.gemini_model
+        self.temperature = settings.gemini_temperature
 
     def _build_prompt(self, keyword: str, language: str) -> str:
         """Build the prompt for LLM processing."""
@@ -145,7 +141,14 @@ Ensure you preserve multi-word entities and provide accurate tags based on seman
         """
         try:
             prompt = self._build_prompt(keyword, language)
-            response = await self.model.generate_content_async(prompt)
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=self.temperature,
+                    response_mime_type="application/json",
+                )
+            )
 
             # Parse JSON response
             result = json.loads(response.text)
@@ -162,7 +165,9 @@ Ensure you preserve multi-word entities and provide accurate tags based on seman
             ]
         except Exception as e:
             # Log error but don't crash - return None for graceful degradation
+            import traceback
             print(f"LLM processing error: {e}")
+            print(f"Full traceback:\n{traceback.format_exc()}")
             return None
 
 
