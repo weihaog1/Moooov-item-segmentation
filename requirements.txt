@@ -1,15 +1,14 @@
 # FastAPI and server
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
 
 # AI/ML
 google-genai==1.48.0
 langdetect==1.0.9
 
 # Database
-aiosqlite==0.19.0
+aiomysql==0.2.0
+cryptography==42.0.5  # Required for aiomysql
 
 # Utilities
 python-dotenv==1.0.0
