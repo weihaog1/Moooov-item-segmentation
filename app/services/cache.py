@@ -1,17 +1,17 @@
-"""Caching service with two-tier architecture (in-memory + SQLite)."""
+"""Caching service with two-tier architecture (in-memory + MySQL)."""
 
 import json
 import hashlib
-import aiosqlite
 from datetime import datetime, timedelta
 from collections import OrderedDict
 from typing import Optional
 from app.core.config import settings
 from app.models.schemas import TokenizeResponse
+from app.db.database import get_pool
 
 
 class CacheService:
-    """Two-tier cache: in-memory LRU + persistent SQLite."""
+    """Two-tier cache: in-memory LRU + persistent MySQL."""
 
     def __init__(self):
         self.memory_cache: OrderedDict = OrderedDict()
@@ -24,13 +24,12 @@ class CacheService:
         combined = f"{normalized}|{language}"
         return hashlib.sha256(combined.encode()).hexdigest()
 
-    def _is_expired(self, timestamp: str) -> bool:
+    def _is_expired(self, timestamp: datetime) -> bool:
         """Check if cache entry is expired."""
         if not self.ttl_seconds:
             return False  # No expiration if TTL is 0
 
-        created = datetime.fromisoformat(timestamp)
-        return datetime.now() - created > timedelta(seconds=self.ttl_seconds)
+        return datetime.now() - timestamp > timedelta(seconds=self.ttl_seconds)
 
     async def get(
         self, keyword: str, language: str
@@ -54,16 +53,18 @@ class CacheService:
             self.memory_cache.move_to_end(cache_key)
             return result
 
-        # Try SQLite cache
-        async with aiosqlite.connect(settings.database_path) as db:
-            async with db.execute(
-                """
-                SELECT result_json, created_at
-                FROM processing_cache
-                WHERE keyword_hash = ?
-                """,
-                (cache_key,),
-            ) as cursor:
+        # Try MySQL cache
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT result_json, created_at
+                    FROM processing_cache
+                    WHERE keyword_hash = %s
+                    """,
+                    (cache_key,),
+                )
                 row = await cursor.fetchone()
 
                 if row:
@@ -75,16 +76,16 @@ class CacheService:
                         return None
 
                     # Update hit count and last accessed
-                    await db.execute(
+                    await cursor.execute(
                         """
                         UPDATE processing_cache
                         SET hit_count = hit_count + 1,
                             last_accessed = CURRENT_TIMESTAMP
-                        WHERE keyword_hash = ?
+                        WHERE keyword_hash = %s
                         """,
                         (cache_key,),
                     )
-                    await db.commit()
+                    await conn.commit()
 
                     # Parse and add to memory cache
                     result = TokenizeResponse.model_validate_json(result_json)
@@ -109,20 +110,21 @@ class CacheService:
         # Add to memory cache
         self._add_to_memory(cache_key, result)
 
-        # Add to SQLite cache
-        async with aiosqlite.connect(settings.database_path) as db:
-            await db.execute(
-                """
-                INSERT INTO processing_cache (keyword_hash, result_json, language)
-                VALUES (?, ?, ?)
-                ON CONFLICT(keyword_hash)
-                DO UPDATE SET
-                    result_json = excluded.result_json,
-                    last_accessed = CURRENT_TIMESTAMP
-                """,
-                (cache_key, result.model_dump_json(), language),
-            )
-            await db.commit()
+        # Add to MySQL cache
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO processing_cache (keyword_hash, result_json, language)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        result_json = VALUES(result_json),
+                        last_accessed = CURRENT_TIMESTAMP
+                    """,
+                    (cache_key, result.model_dump_json(), language),
+                )
+                await conn.commit()
 
     def _add_to_memory(self, key: str, value: TokenizeResponse) -> None:
         """Add entry to memory cache with LRU eviction."""
@@ -136,12 +138,14 @@ class CacheService:
 
     async def _delete_from_db(self, cache_key: str) -> None:
         """Delete expired entry from database."""
-        async with aiosqlite.connect(settings.database_path) as db:
-            await db.execute(
-                "DELETE FROM processing_cache WHERE keyword_hash = ?",
-                (cache_key,),
-            )
-            await db.commit()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "DELETE FROM processing_cache WHERE keyword_hash = %s",
+                    (cache_key,),
+                )
+                await conn.commit()
 
     async def clear_expired(self) -> int:
         """Clear all expired cache entries. Returns number of entries cleared."""
@@ -149,27 +153,31 @@ class CacheService:
             return 0
 
         cutoff = datetime.now() - timedelta(seconds=self.ttl_seconds)
-        async with aiosqlite.connect(settings.database_path) as db:
-            async with db.execute(
-                "SELECT COUNT(*) FROM processing_cache WHERE created_at < ?",
-                (cutoff.isoformat(),),
-            ) as cursor:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT COUNT(*) FROM processing_cache WHERE created_at < %s",
+                    (cutoff,),
+                )
                 row = await cursor.fetchone()
                 count = row[0] if row else 0
 
-            await db.execute(
-                "DELETE FROM processing_cache WHERE created_at < ?",
-                (cutoff.isoformat(),),
-            )
-            await db.commit()
-            return count
+                await cursor.execute(
+                    "DELETE FROM processing_cache WHERE created_at < %s",
+                    (cutoff,),
+                )
+                await conn.commit()
+                return count
 
     async def get_stats(self) -> dict:
         """Get cache statistics."""
-        async with aiosqlite.connect(settings.database_path) as db:
-            async with db.execute(
-                "SELECT COUNT(*), SUM(hit_count) FROM processing_cache"
-            ) as cursor:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT COUNT(*), SUM(hit_count) FROM processing_cache"
+                )
                 row = await cursor.fetchone()
                 total_entries, total_hits = row if row else (0, 0)
 
