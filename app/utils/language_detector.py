@@ -1,7 +1,6 @@
 """Language detection utility."""
 
 import re
-from langdetect import detect, LangDetectException
 from app.core.config import settings
 
 
@@ -23,21 +22,12 @@ def detect_language(text: str) -> str:
     if re.search(r"[\uac00-\ud7af]", text):  # Hangul
         return "ko"
 
-    # Use langdetect for other languages
-    try:
-        detected = detect(text)
-        # Map langdetect codes to our supported codes
-        lang_map = {
-            "zh-cn": "zh",
-            "zh-tw": "zh",
-            "ja": "ja",
-            "ko": "ko",
-            "en": "en",
-            "es": "es",
-        }
-        return lang_map.get(detected, "en")
-    except LangDetectException:
-        return "en"  # Default fallback
+    # Simple heuristic for Spanish (common Spanish characters)
+    if re.search(r"[áéíóúñ¿¡]", text, re.IGNORECASE):
+        return "es"
+
+    # Default to English for Latin script
+    return "en"
 
 
 def validate_language(lang: str | None, text: str) -> str:
