@@ -1,6 +1,28 @@
 version: '3.8'
 
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: segmentation-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-segmentation}
+      MYSQL_USER: ${DB_USER:-apiuser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-apipassword}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${DB_USER:-apiuser}", "-p${DB_PASSWORD:-apipassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - segmentation-network
+
   api:
     build: .
     container_name: item-segmentation-api
@@ -8,15 +30,29 @@ services:
       - "8000:8000"
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - DATABASE_PATH=/app/data/app.db
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-apiuser}
+      - DB_PASSWORD=${DB_PASSWORD:-apipassword}
+      - DB_NAME=${DB_NAME:-segmentation}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENABLE_LEARNING=${ENABLE_LEARNING:-true}
-    volumes:
-      - ./data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 40s
+    networks:
+      - segmentation-network
+
+volumes:
+  mysql_data:
+
+networks:
+  segmentation-network:
+    driver: bridge
