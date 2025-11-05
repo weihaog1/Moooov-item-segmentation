@@ -7,12 +7,18 @@ AI-powered keyword segmentation and semantic tagging for multilingual e-commerce
 - **Multilingual Support**: Chinese, English, Spanish, Japanese, Korean
 - **LLM-Powered Processing**: Uses Google Gemini 2.0 Flash for accurate tokenization and tagging
 - **8 Semantic Categories**: Brand, Product, Audience, Scenario, Color, Size, Selling Point, Attribute
-- **Smart Caching**: Two-tier cache (in-memory + SQLite) reduces API costs
+- **Smart Caching**: Two-tier cache (in-memory + MySQL) reduces API costs
 - **Dictionary Learning**: Automatically learns patterns from high-confidence results
 
 ## Quick Start
 
-### Local Development
+### Prerequisites
+
+- Python 3.10+
+- MySQL 8.0+
+- Google Gemini API Key
+
+### Local Development (with Local MySQL)
 
 ```bash
 # Clone repository
@@ -24,11 +30,27 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
+# Set up MySQL (if not already installed)
+# macOS: brew install mysql && brew services start mysql
+# Linux: sudo apt-get install mysql-server
+# Windows: Download from https://dev.mysql.com/downloads/
+
+# Create database and user
+mysql -u root -p
+```
+```sql
+CREATE DATABASE segmentation CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'apiuser'@'localhost' IDENTIFIED BY 'apipassword';
+GRANT ALL PRIVILEGES ON segmentation.* TO 'apiuser'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
+```bash
 # Set up environment
 cp .env.example .env
-# Edit .env and add your GEMINI_API_KEY
+# Edit .env and add your GEMINI_API_KEY and MySQL credentials
 
-# Initialize database
+# Initialize database tables
 python scripts/init_db.py
 
 # Run server
@@ -37,21 +59,28 @@ uvicorn app.main:app --reload
 
 Visit http://localhost:8000/docs for interactive API documentation.
 
-### Docker Deployment
+### Docker Deployment (Recommended - Includes MySQL)
 
 ```bash
 # Copy environment file
 cp .env.example .env
 # Edit .env and add your GEMINI_API_KEY
 
-# Build and run
+# Build and run (includes MySQL container)
 docker-compose up -d
 
-# View logs
-docker-compose logs -f
+# Wait for MySQL to be healthy, then initialize database
+# (The API container automatically waits for MySQL to be ready)
 
-# Stop
+# View logs
+docker-compose logs -f api
+docker-compose logs -f mysql
+
+# Stop and remove containers
 docker-compose down
+
+# Stop and remove containers + data
+docker-compose down -v
 ```
 
 ## Project Structure
@@ -149,22 +178,34 @@ pytest tests/test_api.py -v
 
 ## Architecture
 
-The system uses an LLM-first architecture:
+The system uses an LLM-first architecture with MySQL persistence:
 
 1. **Language Detection** - Auto-detects language (zh/en/es/ja/ko)
 2. **LLM Processing** - Gemini 2.0 Flash performs tokenization and tagging in one call
-3. **Dictionary Enrichment** - Enhances results with pre-defined dictionaries
-4. **Pattern Learning** - Automatically learns from high-confidence results (≥0.85)
-5. **Caching** - Two-tier cache (memory + SQLite) reduces API costs
+3. **Dictionary Enrichment** - Enhances results with pre-defined MySQL dictionaries
+4. **Pattern Learning** - Automatically learns from high-confidence results (≥0.85) and stores in MySQL
+5. **Caching** - Two-tier cache (in-memory LRU + MySQL) reduces API costs and latency
 
 ## Configuration
 
 Key environment variables in `.env`:
 
 ```bash
-GEMINI_API_KEY=your_key                  # Required
+# Required
+GEMINI_API_KEY=your_key                  # Google Gemini API key
+
+# MySQL Configuration
+DB_HOST=localhost                         # MySQL host
+DB_PORT=3306                             # MySQL port
+DB_USER=apiuser                          # MySQL username
+DB_PASSWORD=apipassword                   # MySQL password
+DB_NAME=segmentation                      # Database name
+
+# Caching
 CACHE_TTL_SECONDS=86400                   # Cache lifetime (24 hours)
 MAX_CACHE_SIZE=1000                       # In-memory cache entries
+
+# Learning
 ENABLE_LEARNING=true                      # Auto-learn patterns
 LEARNING_CONFIDENCE_THRESHOLD=0.85        # Min confidence for learning
 LEARNING_MIN_OCCURRENCES=3                # Min occurrences before pattern is learned
