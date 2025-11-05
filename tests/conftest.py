@@ -1,10 +1,10 @@
-"""Pytest configuration and fixtures."""
+"""Pytest configuration and fixtures for MySQL tests."""
 
 import pytest
 import asyncio
-from pathlib import Path
-import tempfile
-import os
+import aiomysql
+from app.core.config import settings
+from app.db import database
 
 
 @pytest.fixture(scope="session")
@@ -17,22 +17,52 @@ def event_loop():
 
 @pytest.fixture(scope="function")
 async def test_db():
-    """Create temporary test database."""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
-        db_path = f.name
+    """Create temporary test database in MySQL."""
+    # Use test database name
+    test_db_name = f"{settings.db_name}_test"
 
-    # Set test database path
-    from app.core.config import settings
-    original_path = settings.database_path
-    settings.database_path = db_path
+    # Save original database name
+    original_db_name = settings.db_name
 
-    # Initialize database
-    from app.db.database import init_database
-    await init_database()
+    try:
+        # Create test database
+        conn = await aiomysql.connect(
+            host=settings.db_host,
+            port=settings.db_port,
+            user=settings.db_user,
+            password=settings.db_password,
+        )
+        async with conn.cursor() as cursor:
+            await cursor.execute(f"DROP DATABASE IF EXISTS {test_db_name}")
+            await cursor.execute(
+                f"CREATE DATABASE {test_db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+            )
+        conn.close()
 
-    yield db_path
+        # Update settings to use test database
+        settings.db_name = test_db_name
 
-    # Cleanup
-    settings.database_path = original_path
-    if os.path.exists(db_path):
-        os.unlink(db_path)
+        # Close any existing pool
+        await database.close_pool()
+
+        # Initialize test database with schema
+        await database.init_database()
+
+        yield test_db_name
+
+    finally:
+        # Cleanup: close pool and drop test database
+        await database.close_pool()
+
+        conn = await aiomysql.connect(
+            host=settings.db_host,
+            port=settings.db_port,
+            user=settings.db_user,
+            password=settings.db_password,
+        )
+        async with conn.cursor() as cursor:
+            await cursor.execute(f"DROP DATABASE IF EXISTS {test_db_name}")
+        conn.close()
+
+        # Restore original database name
+        settings.db_name = original_db_name
