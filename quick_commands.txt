@@ -1,0 +1,77 @@
+1. Create Python Virtual Environment
+
+Windows:
+# Create virtual environment
+python -m venv venv
+
+# Activate it
+venv\Scripts\activate
+
+Linux/Mac (if needed):
+# Create virtual environment
+python -m venv venv
+
+# Activate it
+source venv/bin/activate
+
+2. Install Dependencies
+
+# Install all requirements
+pip install -r requirements.txt
+
+3. Set Up Database (Local Development)
+
+Option A: Using Docker (Recommended):
+# Start MySQL and API containers
+docker-compose up -d
+
+# View API logs
+docker-compose logs -f api
+
+# Stop containers
+docker-compose down
+
+Option B: Using Local MySQL:
+# Make sure MySQL is running, then initialize database
+python scripts/init_db.py
+
+4. Run the Application
+
+If using local MySQL (not Docker):
+# Run development server
+uvicorn app.main:app --reload
+
+The API will be available at: http://localhost:8000
+
+# Run the initialization script inside the Docker container
+  docker-compose exec api python scripts/init_db.py
+
+  This will create all the necessary tables (processing_cache, tag_mappings, brands, product_terms,      
+  etc.).
+
+5. Run Tests
+
+# Run all tests
+pytest
+
+# Run with verbose output
+pytest -v
+
+# Run with coverage report
+pytest --cov=app --cov-report=html
+
+# Run specific test file
+pytest tests/test_api.py -v
+
+# Run health check test specifically
+pytest tests/test_api.py::test_health_endpoint -v
+
+6. Quick API Test
+
+Check health endpoint:
+curl http://localhost:8000/api/v1/health
+
+Test tokenization:
+curl -X POST http://localhost:8000/api/v1/tokenize \
+-H "Content-Type: application/json" \
+-d "{\"keyword\": \"Apple iPhone 15 Pro 256GB black\"}"
