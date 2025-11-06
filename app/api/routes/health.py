@@ -17,12 +17,12 @@ async def health_check() -> HealthResponse:
 
     Verifies:
     - Database connectivity
-    - Gemini API configuration (checks if API key is set)
+    - DeepSeek API configuration (checks if API key is set)
 
     Returns overall system health status.
     """
     db_healthy = False
-    gemini_healthy = False
+    deepseek_healthy = False
     details = {}
 
     # Check database
@@ -37,22 +37,22 @@ async def health_check() -> HealthResponse:
     except Exception as e:
         details["database"] = f"Error: {str(e)}"
 
-    # Check Gemini API key is configured
+    # Check DeepSeek API key is configured
     try:
-        if settings.gemini_api_key and len(settings.gemini_api_key) > 10:
-            gemini_healthy = True
-            details["gemini"] = "API key configured"
+        if settings.deepseek_api_key and len(settings.deepseek_api_key) > 10:
+            deepseek_healthy = True
+            details["deepseek"] = "API key configured"
         else:
-            details["gemini"] = "API key not configured"
+            details["deepseek"] = "API key not configured"
     except Exception as e:
-        details["gemini"] = f"Error: {str(e)}"
+        details["deepseek"] = f"Error: {str(e)}"
 
-    status = "healthy" if (db_healthy and gemini_healthy) else "unhealthy"
+    status = "healthy" if (db_healthy and deepseek_healthy) else "unhealthy"
 
     return HealthResponse(
         status=status,
         database=db_healthy,
-        gemini_api=gemini_healthy,
+        deepseek_api=deepseek_healthy,
         details=details,
     )
 

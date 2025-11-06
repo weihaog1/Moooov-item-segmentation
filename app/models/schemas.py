@@ -91,5 +91,5 @@ class HealthResponse(BaseModel):
 
     status: Literal["healthy", "unhealthy"] = Field(..., description="System status")
     database: bool = Field(..., description="Database connection status")
-    gemini_api: bool = Field(..., description="Gemini API status")
+    deepseek_api: bool = Field(..., description="DeepSeek API status")
     details: dict = Field(default_factory=dict, description="Additional details")

@@ -26,7 +26,7 @@ async def test_health_endpoint():
         data = response.json()
         assert "status" in data
         assert "database" in data
-        assert "gemini_api" in data
+        assert "deepseek_api" in data
 
 
 @pytest.mark.asyncio
