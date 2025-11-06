@@ -8,13 +8,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Gemini API
-    gemini_api_key: str = Field(..., description="Google Gemini API key")
-    gemini_model: str = Field(
-        default="gemini-2.0-flash-exp", description="Gemini model name"
+    # DeepSeek API
+    deepseek_api_key: str = Field(..., description="DeepSeek API key")
+    deepseek_model: str = Field(
+        default="deepseek-chat", description="DeepSeek model name"
     )
-    gemini_temperature: float = Field(
+    deepseek_temperature: float = Field(
         default=0.1, ge=0.0, le=2.0, description="LLM temperature for consistency"
+    )
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com", description="DeepSeek API base URL"
     )
 
     # Database - MySQL
