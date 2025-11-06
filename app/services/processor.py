@@ -39,11 +39,16 @@ class KeywordProcessor:
         lang = validate_language(language, keyword)
 
         # Check cache
-        cache_hit = False
         if use_cache:
             cached = await cache_service.get(keyword, lang)
             if cached:
+                # Update cache_hit flag and processing time for cached response
+                processing_time = (time.time() - start_time) * 1000
+                cached.cache_hit = True
+                cached.processing_time_ms = round(processing_time, 2)
                 return cached
+
+        cache_hit = False
 
         # Process with LLM
         tagged_tokens = await llm_processor.process(keyword, lang)
