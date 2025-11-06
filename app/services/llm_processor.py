@@ -1,20 +1,22 @@
-"""LLM-based tokenization and tagging using Google Gemini."""
+"""LLM-based tokenization and tagging using DeepSeek API."""
 
 import json
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 from typing import Optional
 from app.core.config import settings
 from app.models.schemas import TokenTag
 
 
 class LLMProcessor:
-    """Processes keywords using Google Gemini for tokenization and tagging."""
+    """Processes keywords using DeepSeek API for tokenization and tagging."""
 
     def __init__(self):
-        self.client = genai.Client(api_key=settings.gemini_api_key)
-        self.model_name = settings.gemini_model
-        self.temperature = settings.gemini_temperature
+        self.client = AsyncOpenAI(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url
+        )
+        self.model_name = settings.deepseek_model
+        self.temperature = settings.deepseek_temperature
 
     def _build_prompt(self, keyword: str, language: str) -> str:
         """Build the prompt for LLM processing."""
@@ -77,7 +79,8 @@ Example 1:
 Input: "Apple iPhone 15 Pro 256GB 黑色"
 Output: {
   "tokens": [
-    {"token": "Apple iPhone 15 Pro", "tags": ["brand_term", "product_term"], "confidence": 0.95},
+    {"token": "Apple", "tags": ["brand_term"], "confidence": 0.95},
+    {"token": "iPhone 15 Pro", "tags": ["product_term"], "confidence": 0.95},
     {"token": "256GB", "tags": ["size_term", "attribute_term"], "confidence": 0.95},
     {"token": "黑色", "tags": ["color_term"], "confidence": 0.95}
   ]
@@ -99,11 +102,10 @@ Example 1:
 Input: "Nike Air Max 90 men's black running shoes"
 Output: {
   "tokens": [
-    {"token": "Nike Air Max 90", "tags": ["brand_term", "product_term"], "confidence": 0.95},
+    {"token": "Nike Air Max 90", "tags": ["brand_term"], "confidence": 0.95},
     {"token": "men's", "tags": ["audience_term"], "confidence": 0.95},
     {"token": "black", "tags": ["color_term"], "confidence": 0.95},
-    {"token": "running", "tags": ["scenario_term"], "confidence": 0.95},
-    {"token": "shoes", "tags": ["product_term"], "confidence": 0.95}
+    {"token": "running shoes", "tags": ["product_term", "scenario_term"], "confidence": 0.95}
   ]
 }
 
@@ -111,7 +113,8 @@ Example 2:
 Input: "Apple MacBook Pro 14-inch M3 Pro 1TB Space Gray"
 Output: {
   "tokens": [
-    {"token": "Apple MacBook Pro", "tags": ["brand_term", "product_term"], "confidence": 0.95},
+    {"token": "Apple", "tags": ["brand_term"], "confidence": 0.95},
+    {"token": "MacBook Pro", "tags": ["product_term"], "confidence": 0.95},
     {"token": "14-inch", "tags": ["size_term"], "confidence": 0.95},
     {"token": "M3 Pro", "tags": ["attribute_term"], "confidence": 0.95},
     {"token": "1TB", "tags": ["size_term", "attribute_term"], "confidence": 0.95},
@@ -141,17 +144,19 @@ Ensure you preserve multi-word entities and provide accurate tags based on seman
         """
         try:
             prompt = self._build_prompt(keyword, language)
-            response = await self.client.aio.models.generate_content(
+
+            # Use OpenAI-compatible API format
+            response = await self.client.chat.completions.create(
                 model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=self.temperature,
-                    response_mime_type="application/json",
-                )
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=self.temperature,
+                response_format={"type": "json_object"}
             )
 
-            # Parse JSON response
-            result = json.loads(response.text)
+            # Parse JSON response from DeepSeek
+            result = json.loads(response.choices[0].message.content)
             tokens_data = result.get("tokens", [])
 
             # Convert to TokenTag objects
