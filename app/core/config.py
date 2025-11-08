@@ -57,7 +57,8 @@ class Settings(BaseSettings):
 
     # Supported languages
     supported_languages: list[str] = Field(
-        default=["zh", "en", "es", "ja", "ko"], description="Supported language codes"
+        default=["zh", "en", "es", "id", "pt", "fr", "ja", "ru", "de", "ko"],
+        description="Supported language codes"
     )
 
     model_config = SettingsConfigDict(

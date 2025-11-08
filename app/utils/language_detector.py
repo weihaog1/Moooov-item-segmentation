@@ -13,7 +13,7 @@ def detect_language(text: str) -> str:
         text: Input text to detect language
 
     Returns:
-        Language code (zh, en, es, ja, ko) or 'en' as fallback
+        Language code (zh, en, es, id, pt, fr, ja, ru, de, ko) or 'en' as fallback
     """
     # Quick character-based detection for CJK languages
     if re.search(r"[\u4e00-\u9fff]", text):  # Chinese characters
@@ -34,6 +34,11 @@ def detect_language(text: str) -> str:
             "ko": "ko",
             "en": "en",
             "es": "es",
+            "id": "id",
+            "pt": "pt",
+            "fr": "fr",
+            "ru": "ru",
+            "de": "de",
         }
         return lang_map.get(detected, "en")
     except LangDetectException:
