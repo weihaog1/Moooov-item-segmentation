@@ -8,6 +8,7 @@ from app.utils.language_detector import validate_language
 from app.services.llm_processor import llm_processor
 from app.services.cache import cache_service
 from app.db.manager import dictionary_manager
+from app.services.spacy_processor import spacy_processor
 from app.core.config import settings
 
 
@@ -20,6 +21,7 @@ class KeywordProcessor:
         language: Optional[str] = None,
         use_cache: bool = True,
         learn_patterns: bool = True,
+        use_spacy: bool = False,
     ) -> TokenizeResponse:
         """
         Process a keyword to extract tokens and semantic tags.
@@ -29,6 +31,7 @@ class KeywordProcessor:
             language: Language code (auto-detect if None)
             use_cache: Whether to use cache
             learn_patterns: Whether to learn new patterns
+            use_spacy: Whether to use spaCy-based tokenization with learned patterns (skip LLM if all tokens match)
 
         Returns:
             TokenizeResponse with tokens, tags, and metadata
@@ -49,8 +52,20 @@ class KeywordProcessor:
                 return cached
 
         cache_hit = False
+        pattern_matched = False
 
-        # Process with LLM
+        # Try spaCy pattern matching if enabled
+        if use_spacy:
+            spacy_result = await spacy_processor.try_spacy_pattern_match(
+                keyword, lang, start_time
+            )
+            if spacy_result:
+                # Cache and return spaCy result
+                if use_cache:
+                    await cache_service.set(keyword, lang, spacy_result)
+                return spacy_result
+
+        # Process with LLM (FALLBACK)
         tagged_tokens = await llm_processor.process(keyword, lang)
 
         if not tagged_tokens:
@@ -79,6 +94,7 @@ class KeywordProcessor:
             tag_summary=tag_summary,
             processing_time_ms=round(processing_time, 2),
             cache_hit=cache_hit,
+            pattern_matched=pattern_matched,
         )
 
         # Cache the result

@@ -190,10 +190,11 @@ When `ENABLE_LEARNING=true`:
 
 ### Multilingual Support
 
-Currently supports: Chinese (zh), English (en), Spanish (es), Japanese (ja), Korean (ko)
-- Language detection is automatic if not specified
+Currently supports: Chinese (zh), English (en), Spanish (es), Indonesian (id), Portuguese (pt), French (fr), Japanese (ja), Russian (ru), German (de), Korean (ko)
+- Language detection is automatic if not specified using the langdetect library
 - Language-specific examples are embedded in LLM prompts for zh and en
 - Dictionary lookups are language-scoped (same term can have different tags per language)
+- All languages use the same LLM model without language-specific prompt modifications
 
 ### MySQL Connection Details
 

@@ -23,6 +23,7 @@ async def tokenize_keyword(request: TokenizeRequest) -> TokenizeResponse:
     - **language**: Optional language code (auto-detected if not provided)
     - **use_cache**: Whether to use cached results (default: true)
     - **learn_patterns**: Whether to learn new patterns (default: true)
+    - **use_spacy**: Whether to use spaCy-based tokenization with learned patterns (default: false)
 
     Returns tokenized and tagged result with semantic categories.
     """
@@ -32,6 +33,7 @@ async def tokenize_keyword(request: TokenizeRequest) -> TokenizeResponse:
             language=request.language,
             use_cache=request.use_cache,
             learn_patterns=request.learn_patterns,
+            use_spacy=request.use_spacy,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
@@ -46,6 +48,7 @@ async def tokenize_batch(request: BatchTokenizeRequest) -> BatchTokenizeResponse
     - **language**: Optional language code for all keywords
     - **use_cache**: Whether to use cached results
     - **learn_patterns**: Whether to learn new patterns
+    - **use_spacy**: Whether to use spaCy-based tokenization with learned patterns
 
     Processes keywords concurrently for better performance.
     """
@@ -63,6 +66,7 @@ async def tokenize_batch(request: BatchTokenizeRequest) -> BatchTokenizeResponse
             language=request.language,
             use_cache=request.use_cache,
             learn_patterns=request.learn_patterns,
+            use_spacy=request.use_spacy,
         )
         for kw in request.keywords
     ]

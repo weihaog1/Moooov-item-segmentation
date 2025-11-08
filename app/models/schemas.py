@@ -40,6 +40,9 @@ class TokenizeRequest(BaseModel):
     learn_patterns: bool = Field(
         default=True, description="Whether to learn new patterns"
     )
+    use_spacy: bool = Field(
+        default=False, description="Whether to use spaCy-based tokenization with learned patterns (skip LLM if all tokens match)"
+    )
 
 
 class TokenizeResponse(BaseModel):
@@ -54,6 +57,9 @@ class TokenizeResponse(BaseModel):
     )
     processing_time_ms: float = Field(..., description="Processing time in milliseconds")
     cache_hit: bool = Field(..., description="Whether result was from cache")
+    pattern_matched: bool = Field(
+        default=False, description="Whether result was from pattern matching (skipped LLM)"
+    )
 
 
 class BatchTokenizeRequest(BaseModel):
@@ -65,6 +71,9 @@ class BatchTokenizeRequest(BaseModel):
     language: str | None = Field(None, description="Language code for all keywords")
     use_cache: bool = Field(default=True, description="Whether to use cache")
     learn_patterns: bool = Field(default=True, description="Whether to learn patterns")
+    use_spacy: bool = Field(
+        default=False, description="Whether to use spaCy-based tokenization with learned patterns"
+    )
 
 
 class BatchTokenizeResponse(BaseModel):

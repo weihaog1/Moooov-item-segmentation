@@ -15,13 +15,6 @@ def detect_language(text: str) -> str:
     Returns:
         Language code (zh, en, es, id, pt, fr, ja, ru, de, ko) or 'en' as fallback
     """
-    # Quick character-based detection for CJK languages
-    if re.search(r"[\u4e00-\u9fff]", text):  # Chinese characters
-        return "zh"
-    if re.search(r"[\u3040-\u309f\u30a0-\u30ff]", text):  # Hiragana/Katakana
-        return "ja"
-    if re.search(r"[\uac00-\ud7af]", text):  # Hangul
-        return "ko"
 
     # Use langdetect for other languages
     try:

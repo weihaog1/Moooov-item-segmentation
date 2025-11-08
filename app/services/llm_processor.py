@@ -102,7 +102,8 @@ Example 1:
 Input: "Nike Air Max 90 men's black running shoes"
 Output: {
   "tokens": [
-    {"token": "Nike Air Max 90", "tags": ["brand_term"], "confidence": 0.95},
+    {"token": "Nike", "tags": ["brand_term"], "confidence": 0.95},
+    {"token": "Air Max 90", "tags": ["product_term"], "confidence": 0.95},
     {"token": "men's", "tags": ["audience_term"], "confidence": 0.95},
     {"token": "black", "tags": ["color_term"], "confidence": 0.95},
     {"token": "running shoes", "tags": ["product_term", "scenario_term"], "confidence": 0.95}

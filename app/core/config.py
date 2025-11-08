@@ -46,6 +46,14 @@ class Settings(BaseSettings):
         default=3, ge=1, description="Min occurrences before learning pattern"
     )
 
+    # Pattern matching settings (fast path optimization)
+    pattern_matching_min_occurrences: int = Field(
+        default=10, ge=1, description="Min occurrences for pattern-based matching"
+    )
+    pattern_matching_min_confidence: float = Field(
+        default=0.9, ge=0.0, le=1.0, description="Min confidence for pattern matching"
+    )
+
     # API settings
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, ge=1, le=65535, description="API port")

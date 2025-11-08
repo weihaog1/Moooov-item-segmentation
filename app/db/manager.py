@@ -114,6 +114,41 @@ class DictionaryManager:
                 )
                 return await cursor.fetchall()
 
+    async def lookup_high_confidence_pattern(
+        self, term: str, language: str
+    ) -> Optional[list[tuple[str, float]]]:
+        """
+        Look up high-confidence pattern for fast path matching.
+
+        Returns list of (tag_type, confidence) tuples if pattern meets criteria:
+        - occurrence_count >= pattern_matching_min_occurrences
+        - confidence >= pattern_matching_min_confidence
+
+        Returns None if pattern doesn't meet criteria.
+        """
+        normalized = term.lower()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT tag_type, confidence
+                    FROM tag_mappings
+                    WHERE normalized_term = %s
+                      AND language = %s
+                      AND occurrence_count >= %s
+                      AND confidence >= %s
+                    """,
+                    (
+                        normalized,
+                        language,
+                        settings.pattern_matching_min_occurrences,
+                        settings.pattern_matching_min_confidence,
+                    ),
+                )
+                results = await cursor.fetchall()
+                return results if results else None
+
     async def add_learned_pattern(
         self, term: str, tag_type: TagType, language: str, confidence: float
     ) -> None:

@@ -6,6 +6,7 @@ pydantic-settings>=2.0.0
 # AI/ML
 openai>=1.0.0
 langdetect==1.0.9
+spacy>=3.7.0
 
 # Database
 aiomysql==0.2.0
@@ -19,6 +20,7 @@ pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
 httpx>=0.28.1
+tqdm==4.66.1
 
 # Development
 black==24.1.1
