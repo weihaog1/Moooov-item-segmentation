@@ -384,7 +384,7 @@ async def main():
 
     # Print report
     print_report(stats)
-    print(f"\n⏱Total time: {elapsed:.2f}s ({stats['performance']['keywords_per_second']:.2f} keywords/sec)")
+    print(f"\nTotal time: {elapsed:.2f}s ({stats['performance']['keywords_per_second']:.2f} keywords/sec)")
 
     # Save results
     save_results(results, stats, args.output)
