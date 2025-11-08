@@ -54,6 +54,22 @@ A set of tables serves as a dictionary for different semantic categories. These 
 *   `selling_point_terms`
 *   `attribute_terms`
 
+## Semantic Tag Categories
+
+The system classifies tokens into 8 semantic categories:
+
+| Tag Type | Description | Examples |
+|----------|-------------|----------|
+| `brand_term` | Brand names | Apple, Nike, 华为 |
+| `product_term` | Product categories | shoes, laptop, 手机 |
+| `audience_term` | Target demographic | men's, kids, 学生 |
+| `scenario_term` | Usage context | running, office, 运动 |
+| `color_term` | Colors | black, red, 黑色 |
+| `size_term` | Sizes/dimensions | 10.5, 256GB, XL |
+| `selling_point_term` | Product features | waterproof, wireless, 防水 |
+| `attribute_term` | Technical specs | memory, battery, 内存 |
+
+
 ## 4. Technology Stack
 
 The project utilizes a selection of modern and robust technologies:
