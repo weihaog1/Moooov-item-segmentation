@@ -1,5 +1,6 @@
 """Main keyword processing service."""
 
+import asyncio
 import time
 from typing import Optional, List
 from collections import defaultdict
@@ -10,6 +11,7 @@ from app.services.cache import cache_service
 from app.db.manager import dictionary_manager
 from app.services.spacy_processor import spacy_processor
 from app.core.config import settings
+from app.utils.circuit_breaker import CircuitOpenError
 
 
 # Stopwords for post-processing filter (backup safety net)
@@ -71,35 +73,60 @@ class KeywordProcessor:
 
         cache_hit = False
         pattern_matched = False
+        processing_path = "unknown"
 
-        # Try spaCy pattern matching if enabled
+        # Try spaCy pattern matching if enabled (FAST PATH)
         if use_spacy:
-            spacy_result = await spacy_processor.try_spacy_pattern_match(
-                keyword, lang, start_time
-            )
-            if spacy_result:
-                # Cache and return spaCy result
-                if use_cache:
-                    await cache_service.set(keyword, lang, spacy_result)
-                return spacy_result
+            try:
+                spacy_result = await spacy_processor.try_spacy_pattern_match(
+                    keyword, lang, start_time
+                )
+                if spacy_result:
+                    processing_path = "spacy"
+                    # Cache and return spaCy result
+                    if use_cache:
+                        await cache_service.set(keyword, lang, spacy_result)
+                    return spacy_result
+            except Exception as e:
+                print(f"spaCy processing failed: {e}")
+                # Continue to LLM fallback
 
-        # Process with LLM (FALLBACK)
-        tagged_tokens = await llm_processor.process(keyword, lang)
+        # Try LLM processing with retry and circuit breaker
+        tagged_tokens = None
+        try:
+            tagged_tokens = await llm_processor.process(keyword, lang)
+            if tagged_tokens:
+                processing_path = "llm"
+                # Apply post-processing filter (safety net)
+                tagged_tokens = self._post_filter_tokens(tagged_tokens, lang)
 
+        except CircuitOpenError:
+            # Circuit breaker is open - LLM service is down
+            print(f"Circuit breaker open - using fallback for: {keyword}")
+            processing_path = "fallback_circuit_open"
+
+        except asyncio.TimeoutError:
+            # All retries exhausted due to timeouts
+            print(f"LLM timeout after all retries for: {keyword}")
+            processing_path = "fallback_timeout"
+
+        except Exception as e:
+            # All retries exhausted due to other errors
+            print(f"LLM failed after retries: {e}")
+            processing_path = "fallback_error"
+
+        # Fallback 1: Simple tokenization + dictionary enrichment
         if not tagged_tokens:
-            # Fallback: return keyword as single token
-            tagged_tokens = [
-                TokenTag(token=keyword, tags=[], confidence=0.5)
-            ]
+            print(f"Using simple tokenization fallback for: {keyword}")
+            tagged_tokens = self._simple_tokenize(keyword, lang)
+            processing_path = f"{processing_path}_simple_tokenize"
 
-        # Apply post-processing filter (safety net)
-        tagged_tokens = self._post_filter_tokens(tagged_tokens, lang)
-
-        # If all tokens were filtered out, use fallback
+        # Fallback 2: If still no tokens, return keyword as single token
         if not tagged_tokens:
             tagged_tokens = [
-                TokenTag(token=keyword, tags=[], confidence=0.5)
+                TokenTag(token=keyword, tags=["unknown"], confidence=0.1)
             ]
+            processing_path = f"{processing_path}_single_token"
 
         # Enrich with dictionary lookups
         enriched_tokens = await self._enrich_with_dictionaries(tagged_tokens, lang)
@@ -261,6 +288,54 @@ class KeywordProcessor:
             filtered.append(token)
 
         return filtered
+
+    def _simple_tokenize(self, keyword: str, language: str) -> List[TokenTag]:
+        """
+        Simple whitespace-based tokenization as fallback.
+
+        Used when LLM processing fails completely. Splits by whitespace
+        and creates tokens with low confidence.
+
+        Args:
+            keyword: The keyword to tokenize
+            language: Language code
+
+        Returns:
+            List of TokenTag objects with low confidence
+        """
+        # Split by whitespace
+        tokens = keyword.split()
+
+        # Filter out stopwords and very short tokens
+        stopwords = STOPWORDS.get(language, set())
+        is_cjk = language in ["zh", "ja", "ko"]
+
+        filtered_tokens = []
+        for token in tokens:
+            token_clean = token.strip()
+
+            # Skip empty tokens
+            if not token_clean:
+                continue
+
+            # Skip stopwords
+            if token_clean.lower() in stopwords:
+                continue
+
+            # Skip single chars for non-CJK
+            if not is_cjk and len(token_clean) == 1:
+                continue
+
+            # Create TokenTag with low confidence (will be enriched by dictionary)
+            filtered_tokens.append(
+                TokenTag(
+                    token=token_clean,
+                    tags=[],
+                    confidence=0.4  # Low confidence for simple tokenization
+                )
+            )
+
+        return filtered_tokens
 
 
 # Global instance
