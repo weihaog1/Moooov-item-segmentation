@@ -167,6 +167,23 @@ async def init_database() -> None:
                 """
             )
 
+            # Synonym mappings table
+            await cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS synonym_mappings (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    canonical_term VARCHAR(255) NOT NULL,
+                    synonym_term VARCHAR(255) NOT NULL,
+                    language VARCHAR(10) NOT NULL,
+                    confidence FLOAT NOT NULL DEFAULT 1.0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_synonym_lang (synonym_term, language),
+                    INDEX idx_canonical_lang (canonical_term, language),
+                    UNIQUE KEY unique_synonym (synonym_term, language)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+
             # Cache table
             await cursor.execute(
                 """
