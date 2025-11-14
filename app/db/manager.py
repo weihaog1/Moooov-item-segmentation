@@ -9,9 +9,28 @@ from app.db.database import get_pool
 class DictionaryManager:
     """Manages dictionary lookups and learned patterns."""
 
+    async def normalize_term(self, term: str, language: str) -> str:
+        """
+        Normalize term by checking synonym mappings.
+
+        Returns the canonical term if a synonym mapping exists,
+        otherwise returns the lowercased term.
+        """
+        normalized = term.lower()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT canonical_term FROM synonym_mappings "
+                    "WHERE synonym_term = %s AND language = %s",
+                    (normalized, language),
+                )
+                result = await cursor.fetchone()
+                return result[0] if result else normalized
+
     async def lookup_brand(self, term: str, language: str) -> Optional[float]:
         """Look up brand term and return confidence if found."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -24,7 +43,7 @@ class DictionaryManager:
 
     async def lookup_product(self, term: str, language: str) -> Optional[float]:
         """Look up product term and return confidence if found."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -37,7 +56,7 @@ class DictionaryManager:
 
     async def lookup_color(self, term: str, language: str) -> Optional[float]:
         """Look up color term and return confidence if found."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -50,7 +69,7 @@ class DictionaryManager:
 
     async def lookup_audience(self, term: str, language: str) -> Optional[float]:
         """Look up audience term and return confidence if found."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -63,7 +82,7 @@ class DictionaryManager:
 
     async def lookup_scenario(self, term: str, language: str) -> Optional[float]:
         """Look up scenario term and return confidence if found."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -76,7 +95,7 @@ class DictionaryManager:
 
     async def lookup_selling_point(self, term: str, language: str) -> Optional[float]:
         """Look up selling point term and return confidence if found."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -89,7 +108,7 @@ class DictionaryManager:
 
     async def lookup_attribute(self, term: str, language: str) -> Optional[float]:
         """Look up attribute term and return confidence if found."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -104,7 +123,7 @@ class DictionaryManager:
         self, term: str, language: str
     ) -> list[tuple[str, float]]:
         """Look up learned tag mappings for a term."""
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -126,7 +145,7 @@ class DictionaryManager:
 
         Returns None if pattern doesn't meet criteria.
         """
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -159,7 +178,7 @@ class DictionaryManager:
         if confidence < settings.learning_confidence_threshold:
             return
 
-        normalized = term.lower()
+        normalized = await self.normalize_term(term, language)
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
