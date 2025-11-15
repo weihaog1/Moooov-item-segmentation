@@ -86,6 +86,27 @@ class Settings(BaseSettings):
         default=60, ge=10, le=300, description="Seconds to wait before testing recovery"
     )
 
+    # Redis & Celery Settings
+    redis_url: str = Field(
+        default="redis://localhost:6379/0", description="Redis connection URL"
+    )
+    celery_broker_url: str = Field(
+        default="", description="Celery broker URL (defaults to redis_url if empty)"
+    )
+    celery_result_backend: str = Field(
+        default="", description="Celery result backend URL (defaults to redis_url if empty)"
+    )
+
+    @property
+    def effective_celery_broker_url(self) -> str:
+        """Get effective Celery broker URL."""
+        return self.celery_broker_url or self.redis_url
+
+    @property
+    def effective_celery_result_backend(self) -> str:
+        """Get effective Celery result backend URL."""
+        return self.celery_result_backend or self.redis_url
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
