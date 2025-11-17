@@ -95,6 +95,47 @@ class DictionaryEntry(BaseModel):
     )
 
 
+class AsyncJobResponse(BaseModel):
+    """Response for async job submission."""
+
+    job_id: str = Field(..., description="Job ID for polling results")
+    status: Literal["queued", "processing", "completed", "failed"] = Field(
+        ..., description="Job status"
+    )
+    message: str = Field(default="", description="Optional status message")
+
+
+class AsyncJobStatusRequest(BaseModel):
+    """Request to check async job status."""
+
+    job_id: str = Field(..., description="Job ID to check")
+
+
+class AsyncJobResultResponse(BaseModel):
+    """Response with async job results."""
+
+    job_id: str = Field(..., description="Job ID")
+    status: Literal["queued", "processing", "completed", "failed"] = Field(
+        ..., description="Job status"
+    )
+    result: dict | None = Field(None, description="Job result (if completed)")
+    error: str | None = Field(None, description="Error message (if failed)")
+
+
+class BatchAsyncRequest(BaseModel):
+    """Request for async batch processing."""
+
+    keywords: list[dict[str, str]] = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="List of dicts with 'keyword' and 'language' keys",
+    )
+    use_llm: bool = Field(
+        default=False, description="Use LLM processing (slower but more accurate)"
+    )
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 

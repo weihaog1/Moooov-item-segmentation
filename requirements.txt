@@ -12,6 +12,10 @@ spacy>=3.7.0
 aiomysql==0.2.0
 cryptography==42.0.5  # Required for aiomysql
 
+# Task Queue & Caching
+celery==5.3.4
+redis==5.0.1
+
 # Utilities
 python-dotenv==1.0.0
 

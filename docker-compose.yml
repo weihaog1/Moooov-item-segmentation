@@ -23,6 +23,19 @@ services:
     networks:
       - segmentation-network
 
+  redis:
+    image: redis:7-alpine
+    container_name: segmentation-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - segmentation-network
+
   api:
     build: .
     container_name: item-segmentation-api
@@ -35,10 +48,13 @@ services:
       - DB_USER=${DB_USER:-apiuser}
       - DB_PASSWORD=${DB_PASSWORD:-apipassword}
       - DB_NAME=${DB_NAME:-segmentation}
+      - REDIS_URL=redis://redis:6379/0
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENABLE_LEARNING=${ENABLE_LEARNING:-true}
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -47,6 +63,50 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - segmentation-network
+
+  celery_dictionary_worker:
+    build: .
+    container_name: celery-dictionary-worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=10 -Q dictionary
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-apiuser}
+      - DB_PASSWORD=${DB_PASSWORD:-apipassword}
+      - DB_NAME=${DB_NAME:-segmentation}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - segmentation-network
+
+  celery_llm_worker:
+    build: .
+    container_name: celery-llm-worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q llm
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-apiuser}
+      - DB_PASSWORD=${DB_PASSWORD:-apipassword}
+      - DB_NAME=${DB_NAME:-segmentation}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - segmentation-network
 
