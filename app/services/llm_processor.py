@@ -7,6 +7,45 @@ from app.core.config import settings
 from app.models.schemas import TokenTag
 
 
+FILTERING_RULES = """
+CRITICAL FILTERING RULES - DO NOT include these in tokenization:
+
+1. STOPWORDS: Common words with no product meaning
+   - English: the, a, an, and, or, for, with, in, on, at, to, from, of, by
+   - Chinese: 的, 了, 在, 是, 和, 与, 或, 为, 以
+   - Japanese: の, は, を, に, が, で, と, へ, や
+   - German: der, die, das, und, oder, für, mit, von, zu
+   - French: le, la, les, un, une, et, ou, de, du, des
+   - Spanish: el, la, los, las, un, una, y, o, de, del
+   - Portuguese: o, a, os, as, um, uma, e, ou, de, do
+   - Indonesian: yang, dan, atau, untuk, dengan, dari, ke
+   - Russian: и, или, для, с, от, к, в, на
+   - Korean: 의, 는, 을, 를, 이, 가, 에, 와
+
+2. PROMOTIONAL TERMS: Not part of product identity
+   - free, shipping, sale, discount, off, deal, promotion, limited, new, best, hot
+   - 免费, 促销, 打折, 优惠, 包邮, 特价, 限时, 新品
+   - 無料, セール, 割引, 特価, 送料無料
+   - kostenlos, versand, angebot, rabatt, neu
+   - gratuit, livraison, solde, promotion, nouveau
+   - gratis, envío, oferta, descuento, nuevo
+   - grátis, frete, oferta, desconto, novo
+
+3. NOISE:
+   - Single characters (unless part of model numbers like "iPhone X", "Type-C")
+   - Pure numbers without units (unless sizes: "500ml", "3-pack", "256GB" are OK)
+   - HTML/special chars: &, <, >, #, @, etc.
+   - Extra whitespace or punctuation only
+
+4. CONFIDENCE MARKING:
+   - Mark confidence < 0.5 for highly ambiguous terms
+   - Common words that might be product terms (e.g., "new", "pro", "plus") should have confidence 0.7-0.8
+
+If a term should be excluded, DO NOT include it in the output tokens array.
+Only return meaningful product-related tokens.
+"""
+
+
 class LLMProcessor:
     """Processes keywords using DeepSeek API for tokenization and tagging."""
 
@@ -26,11 +65,18 @@ class LLMProcessor:
             "es": "Spanish",
             "ja": "Japanese",
             "ko": "Korean",
+            "de": "German",
+            "fr": "French",
+            "pt": "Portuguese",
+            "id": "Indonesian",
+            "ru": "Russian",
         }
 
-        return f"""You are an e-commerce keyword tokenization and tagging expert.
+        prompt = f"""You are an e-commerce keyword tokenization and tagging expert.
 
 Task: Tokenize the following {lang_names.get(language, 'English')} product keyword and tag each token with semantic categories.
+
+{FILTERING_RULES}
 
 CRITICAL RULES:
 1. **PRESERVE MULTI-WORD ENTITIES**: Keep product names, model numbers, and brand+model combinations together
