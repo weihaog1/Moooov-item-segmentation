@@ -1,7 +1,7 @@
 """Main keyword processing service."""
 
 import time
-from typing import Optional
+from typing import Optional, List
 from collections import defaultdict
 from app.models.schemas import TokenizeResponse, TokenTag
 from app.utils.language_detector import validate_language
@@ -10,6 +10,24 @@ from app.services.cache import cache_service
 from app.db.manager import dictionary_manager
 from app.services.spacy_processor import spacy_processor
 from app.core.config import settings
+
+
+# Stopwords for post-processing filter (backup safety net)
+STOPWORDS = {
+    "en": {
+        "the", "a", "an", "and", "or", "for", "with", "in", "on", "at",
+        "to", "from", "of", "by", "is", "are", "was", "were", "be",
+    },
+    "zh": {"的", "了", "在", "是", "和", "与", "或", "为", "以", "有"},
+    "ja": {"の", "は", "を", "に", "が", "で", "と", "へ", "や", "か"},
+    "de": {"der", "die", "das", "und", "oder", "für", "mit", "von", "zu", "ist"},
+    "fr": {"le", "la", "les", "un", "une", "et", "ou", "de", "du", "des", "est"},
+    "es": {"el", "la", "los", "las", "un", "una", "y", "o", "de", "del", "es"},
+    "pt": {"o", "a", "os", "as", "um", "uma", "e", "ou", "de", "do", "é"},
+    "id": {"yang", "dan", "atau", "untuk", "dengan", "dari", "ke", "adalah"},
+    "ru": {"и", "или", "для", "с", "от", "к", "в", "на", "это"},
+    "ko": {"의", "는", "을", "를", "이", "가", "에", "와", "과"},
+}
 
 
 class KeywordProcessor:
@@ -70,6 +88,15 @@ class KeywordProcessor:
 
         if not tagged_tokens:
             # Fallback: return keyword as single token
+            tagged_tokens = [
+                TokenTag(token=keyword, tags=[], confidence=0.5)
+            ]
+
+        # Apply post-processing filter (safety net)
+        tagged_tokens = self._post_filter_tokens(tagged_tokens, lang)
+
+        # If all tokens were filtered out, use fallback
+        if not tagged_tokens:
             tagged_tokens = [
                 TokenTag(token=keyword, tags=[], confidence=0.5)
             ]
@@ -197,6 +224,43 @@ class KeywordProcessor:
                 if token.token not in summary[tag]:
                     summary[tag].append(token.token)
         return dict(summary)
+
+    def _post_filter_tokens(
+        self, tokens: List[TokenTag], language: str
+    ) -> List[TokenTag]:
+        """
+        Apply post-processing filters as safety net.
+
+        This catches tokens that the LLM might have missed filtering.
+        Filters out:
+        - Very low confidence tokens (< 0.3)
+        - Single characters (except for CJK languages)
+        - Pure stopwords
+        """
+        filtered = []
+        stopwords = STOPWORDS.get(language, set())
+        is_cjk = language in ["zh", "ja", "ko"]
+
+        for token in tokens:
+            # Skip very low confidence tokens
+            if token.confidence < 0.3:
+                continue
+
+            # Skip single chars for non-CJK languages
+            if not is_cjk and len(token.token) == 1:
+                continue
+
+            # Skip pure stopwords (backup check)
+            if token.token.lower() in stopwords:
+                continue
+
+            # Skip tokens that are only whitespace or punctuation
+            if not token.token.strip() or token.token.strip() in ".,!?;:-_":
+                continue
+
+            filtered.append(token)
+
+        return filtered
 
 
 # Global instance
