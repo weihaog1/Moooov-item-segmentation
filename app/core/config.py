@@ -69,6 +69,23 @@ class Settings(BaseSettings):
         description="Supported language codes"
     )
 
+    # LLM Error Handling & Retry Settings
+    llm_request_timeout: int = Field(
+        default=30, ge=5, le=120, description="LLM request timeout in seconds"
+    )
+    llm_max_retries: int = Field(
+        default=3, ge=0, le=10, description="Maximum number of retry attempts"
+    )
+    llm_retry_delay: int = Field(
+        default=2, ge=1, le=10, description="Base delay in seconds for exponential backoff"
+    )
+    llm_circuit_breaker_threshold: int = Field(
+        default=5, ge=1, le=20, description="Consecutive failures before opening circuit"
+    )
+    llm_circuit_breaker_timeout: int = Field(
+        default=60, ge=10, le=300, description="Seconds to wait before testing recovery"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

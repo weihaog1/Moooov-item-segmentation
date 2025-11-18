@@ -1,10 +1,13 @@
 """LLM-based tokenization and tagging using DeepSeek API."""
 
+import asyncio
 import json
 from openai import AsyncOpenAI
 from typing import Optional
 from app.core.config import settings
 from app.models.schemas import TokenTag
+from app.utils.retry import retry_with_backoff
+from app.utils.circuit_breaker import CircuitBreaker, CircuitOpenError
 
 
 FILTERING_RULES = """
@@ -56,6 +59,10 @@ class LLMProcessor:
         )
         self.model_name = settings.deepseek_model
         self.temperature = settings.deepseek_temperature
+        self.circuit_breaker = CircuitBreaker(
+            threshold=settings.llm_circuit_breaker_threshold,
+            timeout=settings.llm_circuit_breaker_timeout
+        )
 
     def _build_prompt(self, keyword: str, language: str) -> str:
         """Build the prompt for LLM processing."""
@@ -176,11 +183,57 @@ Ensure you preserve multi-word entities and provide accurate tags based on seman
 
         return prompt
 
+    def _parse_response(self, response) -> Optional[list[TokenTag]]:
+        """
+        Parse LLM response with robust error handling.
+
+        Args:
+            response: Raw response from LLM API
+
+        Returns:
+            List of TokenTag objects or None if parsing fails
+        """
+        try:
+            content = response.choices[0].message.content
+            data = json.loads(content)
+
+            # Validate structure
+            if "tokens" not in data:
+                print("Warning: LLM response missing 'tokens' field")
+                return None
+
+            tokens = []
+            for token_data in data["tokens"]:
+                # Skip malformed tokens
+                if "token" not in token_data or "tags" not in token_data:
+                    continue
+
+                tokens.append(
+                    TokenTag(
+                        token=token_data["token"],
+                        tags=token_data.get("tags", []),
+                        confidence=token_data.get("confidence", 0.5),
+                    )
+                )
+
+            return tokens if tokens else None
+
+        except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
+            print(f"Failed to parse LLM response: {e}")
+            return None
+
+    @retry_with_backoff(
+        max_retries=settings.llm_max_retries,
+        base_delay=settings.llm_retry_delay
+    )
     async def process(
         self, keyword: str, language: str
     ) -> Optional[list[TokenTag]]:
         """
         Process keyword using LLM to tokenize and tag.
+
+        Includes retry logic with exponential backoff and circuit breaker
+        for resilience against LLM service failures.
 
         Args:
             keyword: The keyword to process
@@ -188,39 +241,48 @@ Ensure you preserve multi-word entities and provide accurate tags based on seman
 
         Returns:
             List of TokenTag objects or None if processing fails
+
+        Raises:
+            CircuitOpenError: When circuit breaker is open
+            asyncio.TimeoutError: When request exceeds timeout
         """
+        # Check circuit breaker first
+        if self.circuit_breaker.is_open():
+            raise CircuitOpenError("LLM service unavailable - circuit breaker open")
+
         try:
             prompt = self._build_prompt(keyword, language)
 
-            # Use OpenAI-compatible API format
-            response = await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=self.temperature,
-                response_format={"type": "json_object"}
+            # Call LLM with timeout
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=self.temperature,
+                    response_format={"type": "json_object"}
+                ),
+                timeout=settings.llm_request_timeout
             )
 
-            # Parse JSON response from DeepSeek
-            result = json.loads(response.choices[0].message.content)
-            tokens_data = result.get("tokens", [])
+            # Parse response
+            result = self._parse_response(response)
 
-            # Convert to TokenTag objects
-            return [
-                TokenTag(
-                    token=t["token"],
-                    tags=t.get("tags", []),
-                    confidence=t.get("confidence", 0.7),
-                )
-                for t in tokens_data
-            ]
+            # Record success
+            self.circuit_breaker.record_success()
+
+            return result
+
+        except asyncio.TimeoutError as e:
+            # Record failure and re-raise (retry decorator will catch it)
+            self.circuit_breaker.record_failure()
+            print(f"LLM timeout after {settings.llm_request_timeout}s for: {keyword}")
+            raise
+
         except Exception as e:
-            # Log error but don't crash - return None for graceful degradation
-            import traceback
+            # Record failure and re-raise
+            self.circuit_breaker.record_failure()
             print(f"LLM processing error: {e}")
-            print(f"Full traceback:\n{traceback.format_exc()}")
-            return None
+            raise
 
 
 # Global instance
