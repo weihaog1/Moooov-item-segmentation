@@ -37,5 +37,7 @@ celery_app.conf.update(
     },
 )
 
-# Auto-discover tasks from app.tasks module
-celery_app.autodiscover_tasks(["app.tasks"])
+# Import tasks to ensure they're registered
+from app.tasks import dictionary_tasks  # noqa
+from app.tasks import llm_tasks  # noqa
+from app.tasks import batch_tasks  # noqa

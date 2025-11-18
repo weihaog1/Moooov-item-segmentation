@@ -176,16 +176,14 @@ async def batch_tokenize_async(request: BatchAsyncRequest) -> AsyncJobResponse:
     try:
         # Submit batch processing task
         task = batch_process_task.apply_async(
-            args=[request.keywords, request.use_llm]
+            args=[request.keywords, request.use_llm],
+            queue="batch"
         )
 
-        # The task itself returns batch info
-        result = task.get(timeout=5)  # Quick wait for batch submission
-
         return AsyncJobResponse(
-            job_id=result.get("batch_id", task.id),
+            job_id=task.id,
             status="queued",
-            message=f"Batch of {result.get('total_tasks', 0)} tasks submitted",
+            message=f"Batch of {len(request.keywords)} tasks submitted",
         )
     except Exception as e:
         raise HTTPException(
@@ -203,23 +201,40 @@ async def get_batch_async_result(batch_id: str) -> AsyncJobResultResponse:
 
     - **batch_id**: The batch ID returned from batch async submission
     """
-    try:
-        # Get batch results
-        task = batch_get_results_task.apply_async(args=[batch_id])
-        result = task.get(timeout=5)
+    from celery.result import AsyncResult
+    from app.tasks.celery_app import celery_app
 
-        status_map = {
-            "completed": "completed",
-            "processing": "processing",
-            "error": "failed",
-            "not_found": "failed",
-        }
+    try:
+        task_result = AsyncResult(batch_id, app=celery_app)
+
+        if task_result.state == "PENDING":
+            status = "queued"
+            result = None
+            error = None
+        elif task_result.state == "STARTED":
+            status = "processing"
+            result = None
+            error = None
+        elif task_result.state == "SUCCESS":
+            status = "completed"
+            # The batch_process_task returns a dict with batch results
+            batch_data = task_result.result
+            result = batch_data
+            error = None
+        elif task_result.state == "FAILURE":
+            status = "failed"
+            result = None
+            error = str(task_result.info)
+        else:
+            status = "processing"
+            result = None
+            error = None
 
         return AsyncJobResultResponse(
             job_id=batch_id,
-            status=status_map.get(result.get("status", "failed"), "failed"),
-            result=result.get("results") if result.get("status") == "completed" else None,
-            error=result.get("error"),
+            status=status,
+            result=result,
+            error=error,
         )
     except Exception as e:
         raise HTTPException(

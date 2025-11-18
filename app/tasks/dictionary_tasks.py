@@ -24,12 +24,10 @@ def dictionary_lookup_task(self, keyword: str, language: str) -> Dict[str, Any]:
     # Run async function in sync context
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
-    try:
-        result = loop.run_until_complete(_dictionary_lookup_async(keyword, language))
-        return result
-    finally:
-        loop.close()
+    result = loop.run_until_complete(_dictionary_lookup_async(keyword, language))
+    # Don't close the loop to avoid "Event loop is closed" errors
+    # The loop will be garbage collected
+    return result
 
 
 async def _dictionary_lookup_async(keyword: str, language: str) -> Dict[str, Any]:
