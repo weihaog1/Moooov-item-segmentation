@@ -48,24 +48,20 @@ def batch_process_task(
             dictionary_lookup_task.s(kw["keyword"], kw["language"]) for kw in keywords
         )
 
-    # Execute tasks in parallel and wait for results
+    # Execute tasks in parallel (don't wait - return immediately)
     result = job_group.apply_async()
 
-    # Wait for all tasks to complete (with timeout)
-    try:
-        results = result.get(timeout=300)  # 5 minute timeout for all tasks
-        return {
-            "results": results,
-            "total": len(results),
-            "status": "completed",
-            "processing_method": "llm" if use_llm else "dictionary",
-        }
-    except Exception as e:
-        return {
-            "error": str(e),
-            "status": "failed",
-            "processing_method": "llm" if use_llm else "dictionary",
-        }
+    # Store group result for later retrieval
+    # Save the result using the result backend
+    result.save()
+
+    # Return immediately with the group ID
+    return {
+        "batch_id": result.id,
+        "total": len(keywords),
+        "status": "processing",
+        "processing_method": "llm" if use_llm else "dictionary",
+    }
 
 
 @celery_app.task(name="tasks.batch_get_results", bind=True)

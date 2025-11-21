@@ -201,41 +201,62 @@ async def get_batch_async_result(batch_id: str) -> AsyncJobResultResponse:
 
     - **batch_id**: The batch ID returned from batch async submission
     """
-    from celery.result import AsyncResult
+    from celery.result import GroupResult
     from app.tasks.celery_app import celery_app
 
     try:
+        # First check if this is a batch_process_task result
+        from celery.result import AsyncResult
         task_result = AsyncResult(batch_id, app=celery_app)
 
-        if task_result.state == "PENDING":
-            status = "queued"
-            result = None
-            error = None
-        elif task_result.state == "STARTED":
-            status = "processing"
-            result = None
-            error = None
-        elif task_result.state == "SUCCESS":
-            status = "completed"
-            # The batch_process_task returns a dict with batch results
+        if task_result.state == "SUCCESS":
+            # The batch_process_task has completed, get the batch_id from result
             batch_data = task_result.result
-            result = batch_data
-            error = None
-        elif task_result.state == "FAILURE":
-            status = "failed"
-            result = None
-            error = str(task_result.info)
-        else:
-            status = "processing"
-            result = None
-            error = None
+            actual_batch_id = batch_data.get("batch_id", batch_id)
 
-        return AsyncJobResultResponse(
-            job_id=batch_id,
-            status=status,
-            result=result,
-            error=error,
-        )
+            # Now check the group result
+            group_result = GroupResult.restore(actual_batch_id, app=celery_app)
+
+            if group_result and group_result.ready():
+                # All individual tasks completed
+                try:
+                    results = group_result.get(timeout=1.0)
+                    return AsyncJobResultResponse(
+                        job_id=batch_id,
+                        status="completed",
+                        result={"results": results, "total": len(results)},
+                        error=None,
+                    )
+                except Exception as e:
+                    return AsyncJobResultResponse(
+                        job_id=batch_id,
+                        status="failed",
+                        result=None,
+                        error=str(e),
+                    )
+            else:
+                # Still processing
+                return AsyncJobResultResponse(
+                    job_id=batch_id,
+                    status="processing",
+                    result=None,
+                    error=None,
+                )
+        elif task_result.state == "FAILURE":
+            return AsyncJobResultResponse(
+                job_id=batch_id,
+                status="failed",
+                result=None,
+                error=str(task_result.info),
+            )
+        else:
+            # Still queued or processing
+            return AsyncJobResultResponse(
+                job_id=batch_id,
+                status="processing",
+                result=None,
+                error=None,
+            )
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to get batch results: {str(e)}"
