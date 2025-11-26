@@ -46,6 +46,12 @@ class Settings(BaseSettings):
         default=3, ge=1, description="Min occurrences before learning pattern"
     )
 
+    # Processing mode toggle
+    use_llm_first: bool = Field(
+        default=True,
+        description="Use LLM-first mode: true = always use LLM and learn to dictionary, false = dictionary-first with LLM fallback for unknowns"
+    )
+
     # Pattern matching settings (fast path optimization)
     pattern_matching_min_occurrences: int = Field(
         default=10, ge=1, description="Min occurrences for pattern-based matching"

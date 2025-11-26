@@ -91,7 +91,7 @@ services:
   celery_llm_worker:
     build: .
     container_name: celery-llm-worker
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q llm
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q llm,batch
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - DB_HOST=mysql

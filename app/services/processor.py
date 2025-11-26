@@ -89,37 +89,63 @@ class KeywordProcessor:
                     return spacy_result
             except Exception as e:
                 print(f"spaCy processing failed: {e}")
-                # Continue to LLM fallback
+                # Continue to next path
 
-        # Try LLM processing with retry and circuit breaker
         tagged_tokens = None
-        try:
-            tagged_tokens = await llm_processor.process(keyword, lang)
-            if tagged_tokens:
-                processing_path = "llm"
-                # Apply post-processing filter (safety net)
-                tagged_tokens = self._post_filter_tokens(tagged_tokens, lang)
 
-        except CircuitOpenError:
-            # Circuit breaker is open - LLM service is down
-            print(f"Circuit breaker open - using fallback for: {keyword}")
-            processing_path = "fallback_circuit_open"
+        # Processing strategy based on USE_LLM_FIRST toggle
+        if settings.use_llm_first:
+            # MODE 1: LLM-first (early stage, building dictionary)
+            # Always use LLM for best accuracy, learn results to dictionary
+            try:
+                tagged_tokens = await llm_processor.process(keyword, lang)
+                if tagged_tokens:
+                    processing_path = "llm"
+                    # Apply post-processing filter (safety net)
+                    tagged_tokens = self._post_filter_tokens(tagged_tokens, lang)
 
-        except asyncio.TimeoutError:
-            # All retries exhausted due to timeouts
-            print(f"LLM timeout after all retries for: {keyword}")
-            processing_path = "fallback_timeout"
+            except CircuitOpenError:
+                print(f"Circuit breaker open - using fallback for: {keyword}")
+                processing_path = "fallback_circuit_open"
 
-        except Exception as e:
-            # All retries exhausted due to other errors
-            print(f"LLM failed after retries: {e}")
-            processing_path = "fallback_error"
+            except asyncio.TimeoutError:
+                print(f"LLM timeout after all retries for: {keyword}")
+                processing_path = "fallback_timeout"
 
-        # Fallback 1: Simple tokenization + dictionary enrichment
-        if not tagged_tokens:
-            print(f"Using simple tokenization fallback for: {keyword}")
-            tagged_tokens = self._simple_tokenize(keyword, lang)
-            processing_path = f"{processing_path}_simple_tokenize"
+            except Exception as e:
+                print(f"LLM failed after retries: {e}")
+                processing_path = "fallback_error"
+
+            # Fallback: Simple tokenization if LLM fails
+            if not tagged_tokens:
+                print(f"Using simple tokenization fallback for: {keyword}")
+                tagged_tokens = self._simple_tokenize(keyword, lang)
+                processing_path = f"{processing_path}_simple_tokenize"
+
+        else:
+            # MODE 2: Dictionary-first (production stage, dictionary is mature)
+            # Try dictionary first, only use LLM if unknowns found
+            print(f"Dictionary-first mode: trying dictionary lookup for: {keyword}")
+            tagged_tokens = await self._dictionary_lookup_only(keyword, lang)
+
+            # Check if we have any unknowns
+            has_unknowns = any("unknown" in token.tags for token in tagged_tokens)
+
+            if has_unknowns:
+                # Found unknowns - fallback to LLM for accurate tagging
+                print(f"Found unknowns in dictionary lookup, falling back to LLM: {keyword}")
+                try:
+                    llm_tokens = await llm_processor.process(keyword, lang)
+                    if llm_tokens:
+                        processing_path = "dictionary_then_llm"
+                        tagged_tokens = self._post_filter_tokens(llm_tokens, lang)
+                    else:
+                        processing_path = "dictionary_only"
+                except Exception as e:
+                    print(f"LLM fallback failed: {e}, using dictionary results")
+                    processing_path = "dictionary_only_llm_failed"
+            else:
+                processing_path = "dictionary_only"
 
         # Fallback 2: If still no tokens, return keyword as single token
         if not tagged_tokens:
@@ -336,6 +362,86 @@ class KeywordProcessor:
             )
 
         return filtered_tokens
+
+    async def _dictionary_lookup_only(self, keyword: str, language: str) -> List[TokenTag]:
+        """
+        Dictionary-only lookup without LLM.
+
+        Performs simple tokenization and looks up each token in dictionaries.
+        Returns tokens tagged with dictionary matches or 'unknown'.
+
+        Args:
+            keyword: The keyword to tokenize
+            language: Language code
+
+        Returns:
+            List of TokenTag objects with dictionary tags or 'unknown'
+        """
+        # Simple tokenization
+        tokens = self._simple_tokenize(keyword, language)
+
+        # Enrich with dictionary lookups
+        enriched_tokens = []
+        for token in tokens:
+            tags = set()
+            max_confidence = 0.5  # Base confidence for dictionary matches
+
+            # Check all dictionaries
+            brand_conf = await dictionary_manager.lookup_brand(token.token, language)
+            if brand_conf:
+                tags.add("brand_term")
+                max_confidence = max(max_confidence, brand_conf)
+
+            product_conf = await dictionary_manager.lookup_product(token.token, language)
+            if product_conf:
+                tags.add("product_term")
+                max_confidence = max(max_confidence, product_conf)
+
+            color_conf = await dictionary_manager.lookup_color(token.token, language)
+            if color_conf:
+                tags.add("color_term")
+                max_confidence = max(max_confidence, color_conf)
+
+            audience_conf = await dictionary_manager.lookup_audience(token.token, language)
+            if audience_conf:
+                tags.add("audience_term")
+                max_confidence = max(max_confidence, audience_conf)
+
+            scenario_conf = await dictionary_manager.lookup_scenario(token.token, language)
+            if scenario_conf:
+                tags.add("scenario_term")
+                max_confidence = max(max_confidence, scenario_conf)
+
+            sp_conf = await dictionary_manager.lookup_selling_point(token.token, language)
+            if sp_conf:
+                tags.add("selling_point_term")
+                max_confidence = max(max_confidence, sp_conf)
+
+            attr_conf = await dictionary_manager.lookup_attribute(token.token, language)
+            if attr_conf:
+                tags.add("attribute_term")
+                max_confidence = max(max_confidence, attr_conf)
+
+            # Check learned patterns
+            learned = await dictionary_manager.lookup_learned_tags(token.token, language)
+            for tag_type, conf in learned:
+                tags.add(tag_type)
+                max_confidence = max(max_confidence, conf)
+
+            # If no tags found, mark as unknown
+            if not tags:
+                tags.add("unknown")
+                max_confidence = 0.5
+
+            enriched_tokens.append(
+                TokenTag(
+                    token=token.token,
+                    tags=sorted(list(tags)),
+                    confidence=round(max_confidence, 3),
+                )
+            )
+
+        return enriched_tokens
 
 
 # Global instance

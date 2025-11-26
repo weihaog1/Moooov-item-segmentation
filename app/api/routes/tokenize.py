@@ -50,7 +50,7 @@ async def tokenize_batch(request: BatchTokenizeRequest) -> BatchTokenizeResponse
     """
     Batch process multiple keywords.
 
-    - **keywords**: List of keywords to process (max 100)
+    - **keywords**: List of keywords to process (max 500)
     - **language**: Optional language code for all keywords
     - **use_cache**: Whether to use cached results
     - **learn_patterns**: Whether to learn new patterns
@@ -58,9 +58,9 @@ async def tokenize_batch(request: BatchTokenizeRequest) -> BatchTokenizeResponse
 
     Processes keywords concurrently for better performance.
     """
-    if len(request.keywords) > 100:
+    if len(request.keywords) > 500:
         raise HTTPException(
-            status_code=400, detail="Maximum 100 keywords per batch request"
+            status_code=400, detail="Maximum 500 keywords per batch request"
         )
 
     start_time = time.time()
@@ -101,14 +101,24 @@ async def tokenize_async(request: TokenizeRequest) -> AsyncJobResponse:
     - **keyword**: The product keyword to process
     - **language**: Optional language code (auto-detected if not provided)
 
-    The job will be processed by either dictionary workers (fast) or LLM workers
-    depending on system configuration.
+    Processing behavior is controlled by USE_LLM_FIRST environment variable:
+    - True (default): Always use LLM for accurate results, learn to dictionary
+    - False: Use dictionary first, fallback to LLM only if unknowns found
     """
+    from app.core.config import settings
+
     try:
-        # Submit to dictionary task queue (fast path)
-        task = dictionary_lookup_task.apply_async(
-            args=[request.keyword, request.language or "en"]
-        )
+        # Choose task based on USE_LLM_FIRST toggle
+        if settings.use_llm_first:
+            # LLM-first mode: Always use LLM (best for early stage)
+            task = llm_process_task.apply_async(
+                args=[request.keyword, request.language or "en"]
+            )
+        else:
+            # Dictionary-first mode: Fast path with LLM fallback
+            task = dictionary_lookup_task.apply_async(
+                args=[request.keyword, request.language or "en"]
+            )
 
         return AsyncJobResponse(
             job_id=task.id,
@@ -174,16 +184,19 @@ async def batch_tokenize_async(request: BatchAsyncRequest) -> AsyncJobResponse:
     Returns a batch_id that can be used to poll for results.
     """
     try:
+        # Convert KeywordItem objects to dicts for Celery
+        keywords_list = [{"keyword": kw.keyword, "language": kw.language} for kw in request.keywords]
+
         # Submit batch processing task
         task = batch_process_task.apply_async(
-            args=[request.keywords, request.use_llm],
+            args=[keywords_list, request.use_llm],
             queue="batch"
         )
 
         return AsyncJobResponse(
             job_id=task.id,
             status="queued",
-            message=f"Batch of {len(request.keywords)} tasks submitted",
+            message=f"Batch of {len(keywords_list)} tasks submitted",
         )
     except Exception as e:
         raise HTTPException(
@@ -201,46 +214,71 @@ async def get_batch_async_result(batch_id: str) -> AsyncJobResultResponse:
 
     - **batch_id**: The batch ID returned from batch async submission
     """
-    from celery.result import GroupResult
+    from celery.result import GroupResult, AsyncResult
     from app.tasks.celery_app import celery_app
 
     try:
-        # First check if this is a batch_process_task result
-        from celery.result import AsyncResult
+        # Check batch_process_task status
         task_result = AsyncResult(batch_id, app=celery_app)
 
         if task_result.state == "SUCCESS":
-            # The batch_process_task has completed, get the batch_id from result
-            batch_data = task_result.result
-            actual_batch_id = batch_data.get("batch_id", batch_id)
+            # Get the group ID without blocking
+            try:
+                batch_data = task_result.get(timeout=0.5)
+                actual_batch_id = batch_data.get("batch_id")
 
-            # Now check the group result
-            group_result = GroupResult.restore(actual_batch_id, app=celery_app)
-
-            if group_result and group_result.ready():
-                # All individual tasks completed
-                try:
-                    results = group_result.get(timeout=1.0)
-                    return AsyncJobResultResponse(
-                        job_id=batch_id,
-                        status="completed",
-                        result={"results": results, "total": len(results)},
-                        error=None,
-                    )
-                except Exception as e:
+                if not actual_batch_id:
                     return AsyncJobResultResponse(
                         job_id=batch_id,
                         status="failed",
                         result=None,
-                        error=str(e),
+                        error="No group ID found in batch task result",
                     )
-            else:
-                # Still processing
+
+                # Check the group result
+                group_result = GroupResult.restore(actual_batch_id, app=celery_app)
+
+                if not group_result:
+                    return AsyncJobResultResponse(
+                        job_id=batch_id,
+                        status="failed",
+                        result=None,
+                        error="Group result not found",
+                    )
+
+                if group_result.ready():
+                    # All tasks completed
+                    try:
+                        results = group_result.get(timeout=1.0)
+                        return AsyncJobResultResponse(
+                            job_id=batch_id,
+                            status="completed",
+                            result={"results": results, "total": len(results)},
+                            error=None,
+                        )
+                    except Exception as e:
+                        return AsyncJobResultResponse(
+                            job_id=batch_id,
+                            status="failed",
+                            result=None,
+                            error=f"Error getting results: {str(e)}",
+                        )
+                else:
+                    # Still processing individual tasks
+                    completed = group_result.completed_count() if hasattr(group_result, 'completed_count') else 0
+                    total = len(group_result) if hasattr(group_result, '__len__') else 0
+                    return AsyncJobResultResponse(
+                        job_id=batch_id,
+                        status="processing",
+                        result={"completed": completed, "total": total},
+                        error=None,
+                    )
+            except Exception as e:
                 return AsyncJobResultResponse(
                     job_id=batch_id,
-                    status="processing",
+                    status="failed",
                     result=None,
-                    error=None,
+                    error=f"Error retrieving batch data: {str(e)}",
                 )
         elif task_result.state == "FAILURE":
             return AsyncJobResultResponse(
@@ -250,7 +288,7 @@ async def get_batch_async_result(batch_id: str) -> AsyncJobResultResponse:
                 error=str(task_result.info),
             )
         else:
-            # Still queued or processing
+            # Still queued or processing the batch task itself
             return AsyncJobResultResponse(
                 job_id=batch_id,
                 status="processing",

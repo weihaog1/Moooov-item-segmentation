@@ -1,7 +1,7 @@
 """Pydantic schemas for API requests and responses."""
 
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # Tag types
@@ -66,7 +66,7 @@ class BatchTokenizeRequest(BaseModel):
     """Request to batch process multiple keywords."""
 
     keywords: list[str] = Field(
-        ..., min_length=1, max_length=100, description="Keywords to process"
+        ..., min_length=1, max_length=500, description="Keywords to process (max 500)"
     )
     language: str | None = Field(None, description="Language code for all keywords")
     use_cache: bool = Field(default=True, description="Whether to use cache")
@@ -122,18 +122,31 @@ class AsyncJobResultResponse(BaseModel):
     error: str | None = Field(None, description="Error message (if failed)")
 
 
+class KeywordItem(BaseModel):
+    """Single keyword item for batch processing."""
+    keyword: str = Field(..., description="The keyword to process")
+    language: str = Field(default="en", description="Language code")
+
+
 class BatchAsyncRequest(BaseModel):
     """Request for async batch processing."""
 
-    keywords: list[dict[str, str]] = Field(
+    keywords: list[KeywordItem] = Field(
         ...,
-        min_length=1,
-        max_length=1000,
-        description="List of dicts with 'keyword' and 'language' keys",
+        description="List of keywords to process",
     )
     use_llm: bool = Field(
         default=False, description="Use LLM processing (slower but more accurate)"
     )
+
+    @field_validator('keywords')
+    @classmethod
+    def validate_keywords_length(cls, v):
+        if len(v) < 1:
+            raise ValueError('keywords list must contain at least 1 item')
+        if len(v) > 1000:
+            raise ValueError('keywords list cannot exceed 1000 items')
+        return v
 
 
 class HealthResponse(BaseModel):

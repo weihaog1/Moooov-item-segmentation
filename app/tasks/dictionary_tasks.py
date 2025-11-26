@@ -1,104 +1,148 @@
 """Dictionary-only lookup tasks for fast processing."""
 
 import asyncio
-from typing import List, Dict, Any
+from typing import Dict, Any
 from app.tasks.celery_app import celery_app
-from app.db.manager import dictionary_manager
+from app.core.config import settings
+import pymysql
 
 
 @celery_app.task(name="tasks.dictionary_lookup", bind=True)
 def dictionary_lookup_task(self, keyword: str, language: str) -> Dict[str, Any]:
     """
-    Perform dictionary-only lookup (fast, no LLM).
+    Perform dictionary lookup with optional LLM fallback.
+
+    Behavior depends on USE_LLM_FIRST setting:
+    - If True: This shouldn't be called (LLM task is used instead)
+    - If False: Dictionary first, fallback to LLM if unknowns found
 
     This is a lightweight task that runs in the dictionary worker pool.
     It performs simple tokenization and enriches with dictionary lookups.
 
     Args:
-        keyword: The keyword to process
+        keyword: The keyword to tokenize
         language: Language code
 
     Returns:
         Dict with tokens and processing metadata
     """
-    # Run async function in sync context
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(_dictionary_lookup_async(keyword, language))
-    # Don't close the loop to avoid "Event loop is closed" errors
-    # The loop will be garbage collected
-    return result
-
-
-async def _dictionary_lookup_async(keyword: str, language: str) -> Dict[str, Any]:
-    """Async implementation of dictionary lookup."""
     # Simple tokenization by whitespace
     tokens = keyword.split()
 
-    # Enrich with dictionaries
-    enriched_tokens = []
-    for token in tokens:
-        # Normalize term (handles synonyms)
-        normalized = await dictionary_manager.normalize_term(token, language)
+    # Create synchronous MySQL connection for this task
+    conn = pymysql.connect(
+        host=settings.db_host,
+        port=settings.db_port,
+        user=settings.db_user,
+        password=settings.db_password,
+        database=settings.db_name,
+        charset='utf8mb4',
+        cursorclass=pymysql.cursors.DictCursor
+    )
 
-        # Lookup in all dictionaries
-        tags = []
-        confidence = 0.5
+    try:
+        enriched_tokens = []
 
-        # Check each dictionary
-        brand_conf = await dictionary_manager.lookup_brand(normalized, language)
-        if brand_conf:
-            tags.append("brand_term")
-            confidence = max(confidence, brand_conf)
+        with conn.cursor() as cursor:
+            for token in tokens:
+                normalized = token.lower()
+                tags = []
+                confidence = 0.5
 
-        product_conf = await dictionary_manager.lookup_product(normalized, language)
-        if product_conf:
-            tags.append("product_term")
-            confidence = max(confidence, product_conf)
+                # Check synonym mapping first
+                cursor.execute(
+                    "SELECT canonical_term FROM synonym_mappings WHERE synonym_term = %s AND language = %s",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    normalized = result['canonical_term']
 
-        color_conf = await dictionary_manager.lookup_color(normalized, language)
-        if color_conf:
-            tags.append("color_term")
-            confidence = max(confidence, color_conf)
+                # Check each dictionary
+                cursor.execute(
+                    "SELECT confidence FROM brands WHERE normalized_name = %s AND language = %s LIMIT 1",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    tags.append("brand_term")
+                    confidence = max(confidence, result['confidence'])
 
-        audience_conf = await dictionary_manager.lookup_audience(normalized, language)
-        if audience_conf:
-            tags.append("audience_term")
-            confidence = max(confidence, audience_conf)
+                cursor.execute(
+                    "SELECT confidence FROM product_terms WHERE normalized_term = %s AND language = %s LIMIT 1",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    tags.append("product_term")
+                    confidence = max(confidence, result['confidence'])
 
-        scenario_conf = await dictionary_manager.lookup_scenario(normalized, language)
-        if scenario_conf:
-            tags.append("scenario_term")
-            confidence = max(confidence, scenario_conf)
+                cursor.execute(
+                    "SELECT confidence FROM color_terms WHERE normalized_term = %s AND language = %s LIMIT 1",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    tags.append("color_term")
+                    confidence = max(confidence, result['confidence'])
 
-        sp_conf = await dictionary_manager.lookup_selling_point(normalized, language)
-        if sp_conf:
-            tags.append("selling_point_term")
-            confidence = max(confidence, sp_conf)
+                cursor.execute(
+                    "SELECT confidence FROM audience_terms WHERE normalized_term = %s AND language = %s LIMIT 1",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    tags.append("audience_term")
+                    confidence = max(confidence, result['confidence'])
 
-        attr_conf = await dictionary_manager.lookup_attribute(normalized, language)
-        if attr_conf:
-            tags.append("attribute_term")
-            confidence = max(confidence, attr_conf)
+                cursor.execute(
+                    "SELECT confidence FROM scenario_terms WHERE normalized_term = %s AND language = %s LIMIT 1",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    tags.append("scenario_term")
+                    confidence = max(confidence, result['confidence'])
 
-        # Check learned patterns
-        learned = await dictionary_manager.lookup_learned_tags(normalized, language)
-        for tag_type, conf in learned:
-            if tag_type not in tags:
-                tags.append(tag_type)
-            confidence = max(confidence, conf)
+                cursor.execute(
+                    "SELECT confidence FROM selling_point_terms WHERE normalized_term = %s AND language = %s LIMIT 1",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    tags.append("selling_point_term")
+                    confidence = max(confidence, result['confidence'])
 
-        enriched_tokens.append(
-            {
-                "token": token,
-                "tags": tags or ["unknown"],
-                "confidence": round(confidence, 3),
-            }
-        )
+                cursor.execute(
+                    "SELECT confidence FROM attribute_terms WHERE normalized_term = %s AND language = %s LIMIT 1",
+                    (normalized, language)
+                )
+                result = cursor.fetchone()
+                if result:
+                    tags.append("attribute_term")
+                    confidence = max(confidence, result['confidence'])
 
-    return {
-        "keyword": keyword,
-        "language": language,
-        "tokens": enriched_tokens,
-        "processing_path": "dictionary",
-    }
+                # Check learned patterns
+                cursor.execute(
+                    "SELECT tag_type, confidence FROM tag_mappings WHERE normalized_term = %s AND language = %s",
+                    (normalized, language)
+                )
+                for row in cursor.fetchall():
+                    if row['tag_type'] not in tags:
+                        tags.append(row['tag_type'])
+                    confidence = max(confidence, row['confidence'])
+
+                enriched_tokens.append({
+                    "token": token,
+                    "tags": tags or ["unknown"],
+                    "confidence": round(confidence, 3),
+                })
+
+        return {
+            "keyword": keyword,
+            "language": language,
+            "tokens": enriched_tokens,
+            "processing_path": "dictionary",
+        }
+    finally:
+        conn.close()

@@ -1,16 +1,27 @@
 """
 Comprehensive testing script for keywords.csv dataset.
-Tests all keywords against the tokenization API and generates detailed reports.
+Tests keywords against the tokenization API using the batch endpoint for optimal performance.
 
 Usage:
     python test_all.py [options]
 
 Options:
     --limit N          Test only first N keywords (default: all)
-    --batch-size N     Batch size for API calls (default: 10)
+    --batch-size N     Keywords per batch API call (default: 300, max: 500)
     --api-url URL      API endpoint (default: http://localhost:8000)
     --output FILE      Output file for results (default: test_results.json)
     --no-cache         Disable cache for testing
+    --use-spacy        Enable spaCy pattern matching
+
+Examples:
+    # Process 300 keywords using batch API (default batch size)
+    python test_all.py --limit 300 --no-cache
+
+    # Process all keywords with larger batches (500 per call)
+    python test_all.py --batch-size 500
+
+    # Test with dictionary-first mode (set USE_LLM_FIRST=false in .env)
+    python test_all.py --limit 500
 """
 
 import csv
@@ -30,20 +41,28 @@ from tqdm import tqdm
 
 def load_csv(filepath: str) -> List[Dict[str, str]]:
     """Load CSV with proper encoding detection."""
-    encodings = ['utf-8', 'utf-8-sig', 'shift-jis', 'gbk', 'gb2312', 'euc-kr', 'cp1252', 'latin1']
+    encodings = ['gbk', 'gb2312', 'utf-8', 'utf-8-sig', 'shift-jis', 'euc-kr', 'cp1252', 'latin1', 'iso-8859-1', 'windows-1252']
 
     for encoding in encodings:
         try:
             with open(filepath, 'r', encoding=encoding) as f:
                 reader = csv.DictReader(f)
                 data = list(reader)
-                print(f"✓ Successfully loaded {len(data):,} keywords with encoding: {encoding}")
+                print(f"Successfully loaded {len(data):,} keywords with encoding: {encoding}")
                 return data
-        except (UnicodeDecodeError, UnicodeError):
+        except (UnicodeDecodeError, UnicodeError, Exception):
             continue
 
-    print("Could not decode file with any known encoding")
-    return []
+    # Last resort: try with errors='ignore'
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            reader = csv.DictReader(f)
+            data = list(reader)
+            print(f"Successfully loaded {len(data):,} keywords with UTF-8 (ignoring errors)")
+            return data
+    except Exception as e:
+        print(f"Could not decode file: {e}")
+        return []
 
 
 async def test_keyword(
@@ -101,44 +120,83 @@ async def test_keyword(
 async def test_batch(
     keywords: List[Dict[str, str]],
     api_url: str,
-    batch_size: int = 10,
+    batch_size: int = 300,
     use_cache: bool = True,
     use_spacy: bool = False,
     show_progress: bool = True
 ) -> List[Dict[str, Any]]:
-    """Test a batch of keywords with progress tracking."""
+    """Test a batch of keywords using the batch API endpoint."""
     results = []
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         # Create progress bar
         pbar = tqdm(total=len(keywords), desc="Testing keywords", disable=not show_progress)
 
-        # Process in batches
+        # Process in batches using the /batch endpoint
         for i in range(0, len(keywords), batch_size):
             batch = keywords[i:i + batch_size]
 
-            # Create tasks for concurrent execution
-            tasks = [
-                test_keyword(
-                    client,
-                    row['search_term'],
-                    row.get('language', 'auto'),
-                    api_url,
-                    use_cache,
-                    use_spacy
-                )
-                for row in batch
-            ]
+            # Extract keywords for batch request
+            keyword_list = [row['search_term'] for row in batch]
+            # Get language (assume all same language, or use first one)
+            language = batch[0].get('language', 'auto') if batch else 'auto'
 
-            # Execute batch concurrently
-            batch_results = await asyncio.gather(*tasks)
-            results.extend(batch_results)
+            try:
+                # Call batch API endpoint
+                response = await client.post(
+                    f"{api_url}/api/v1/tokenize/batch",
+                    json={
+                        "keywords": keyword_list,
+                        "language": language,
+                        "use_cache": use_cache,
+                        "learn_patterns": True,
+                        "use_spacy": use_spacy
+                    },
+                    timeout=300.0
+                )
+
+                if response.status_code == 200:
+                    batch_response = response.json()
+                    # Convert batch response to individual results
+                    for idx, result_data in enumerate(batch_response.get('results', [])):
+                        results.append({
+                            "success": True,
+                            "keyword": keyword_list[idx],
+                            "language": language,
+                            "data": result_data,
+                            "status_code": 200,
+                            "error": None
+                        })
+                else:
+                    # Batch failed - mark all keywords as failed
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                    for keyword in keyword_list:
+                        results.append({
+                            "success": False,
+                            "keyword": keyword,
+                            "language": language,
+                            "data": None,
+                            "status_code": response.status_code,
+                            "error": error_msg
+                        })
+
+            except Exception as e:
+                # Exception - mark all keywords in batch as failed
+                for keyword in keyword_list:
+                    results.append({
+                        "success": False,
+                        "keyword": keyword,
+                        "language": language,
+                        "data": None,
+                        "status_code": None,
+                        "error": str(e)
+                    })
 
             # Update progress
             pbar.update(len(batch))
 
-            # Small delay to avoid overwhelming the API
-            await asyncio.sleep(0.1)
+            # Small delay between batches
+            await asyncio.sleep(0.2)
 
         pbar.close()
 
@@ -308,7 +366,7 @@ def save_failed_keywords(results: List[Dict[str, Any]], output_file: str = "fail
     failed = [r for r in results if not r['success']]
 
     if not failed:
-        print("\n✅ No failed keywords to save!")
+        print("\nNo failed keywords to save!")
         return
 
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
@@ -328,9 +386,9 @@ def save_failed_keywords(results: List[Dict[str, Any]], output_file: str = "fail
 
 async def main():
     """Main test execution."""
-    parser = argparse.ArgumentParser(description='Test all keywords in keywords.csv')
+    parser = argparse.ArgumentParser(description='Test all keywords in keywords.csv using batch API endpoint')
     parser.add_argument('--limit', type=int, default=None, help='Test only first N keywords')
-    parser.add_argument('--batch-size', type=int, default=10, help='Batch size for API calls')
+    parser.add_argument('--batch-size', type=int, default=300, help='Keywords per batch API call (max 500, default 300)')
     parser.add_argument('--api-url', default='http://localhost:8000', help='API endpoint URL')
     parser.add_argument('--output', default='test_results.json', help='Output file for results')
     parser.add_argument('--no-cache', action='store_true', help='Disable cache for testing')
